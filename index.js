@@ -595,6 +595,7 @@ module.exports = class CachePolicy {
         return !!(
             !this.storable() ||
             this._rescc['no-cache'] ||
+            this._resHeaders.vary === '*' ||
             (this._isShared &&
                 (this._rescc['proxy-revalidate'] ||
                     // Sharing responses with cookies requires an explicit opt-in.
@@ -615,10 +616,6 @@ module.exports = class CachePolicy {
      */
     maxAge() {
         if (this._requiresRevalidation()) {
-            return 0;
-        }
-
-        if (this._resHeaders.vary === '*') {
             return 0;
         }
 
@@ -686,7 +683,11 @@ module.exports = class CachePolicy {
      * @returns {boolean} `true` if `stale-if-error` condition allows use of a stale response.
      */
     _useStaleIfError() {
-        return this.maxAge() + toNumberOrZero(this._rescc['stale-if-error']) > this.age();
+        return (
+            !this._requiresRevalidation() &&
+            !this._rescc['must-revalidate'] &&
+            this.maxAge() + toNumberOrZero(this._rescc['stale-if-error']) > this.age()
+        );
     }
 
     /** See `evaluateRequest()` for a more complete solution
@@ -694,7 +695,11 @@ module.exports = class CachePolicy {
      */
     useStaleWhileRevalidate() {
         const swr = toNumberOrZero(this._rescc['stale-while-revalidate']);
-        return swr > 0 && this.maxAge() + swr > this.age();
+        return (
+            !this._requiresRevalidation() &&
+            !this._rescc['must-revalidate'] &&
+            swr > 0 && this.maxAge() + swr > this.age()
+        );
     }
 
     /**
@@ -835,7 +840,11 @@ module.exports = class CachePolicy {
     revalidatedPolicy(request, response) {
         this._assertRequestHasHeaders(request);
 
-        if (this._useStaleIfError() && isErrorResponse(response)) {
+        if (
+            this._requestMatches(request, true) &&
+            this._useStaleIfError() &&
+            isErrorResponse(response)
+        ) {
           return {
               policy: this,
               modified: false,
